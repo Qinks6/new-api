@@ -1,70 +1,80 @@
-# .github/workflows/freebsd-release.yml
+# .github/workflows/build-freebsd.yml
 
-name: Build and Release for FreeBSD
+name: Build for FreeBSD
 
-
-# 触发条件：支持三种方式
+# 手动触发
 on:
-  # 1. 当推送一个以 'v' 开头的 tag 时触发 (用于正式发布)
-  push:
-    tags:
-      - 'v*'
-
-  # 2. 当推送到 main 分支时触发 (用于持续集成)
-  push:
-    branches:
-      - 'main' # 或者你的主分支名，如 'master'
-
-  # 3. 手动触发 (用于测试或临时构建)
   workflow_dispatch:
+    inputs:
+      go_version:
+        description: 'Go version to use'
+        required: true
+        default: '1.21.6'
+        type: string
+      debug:
+        description: 'Enable debug logging'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
-    name: Build Go Binary for FreeBSD
+    name: Build FreeBSD Binary
+    # 使用最新的 Ubuntu 环境作为构建环境
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
+      # 1. 检出代码
+      - name: Checkout source code
         uses: actions/checkout@v4
 
+      # 2. 设置 Go 环境
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: 'go.mod'
+          # 使用输入框指定的 Go 版本，默认为 1.21.6
+          go-version: ${{ inputs.go_version }}
+          # 启用依赖缓存，加速构建
+          cache: true
 
-      - name: Setup Bun
+      # 3. 设置 Bun 环境 (用于前端构建)
+      - name: Set up Bun
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: latest
+          bun-version: latest # 使用最新版本的 Bun
 
-      - name: Build Frontend
+      # 4. 构建前端资源 (必须在 Go 构建之前)
+      - name: Build Frontend Assets
         run: |
+          echo "Building frontend..."
           cd web
           bun install
           bun run build
-          
-      - name: Build Go binary for FreeBSD
+          echo "Frontend build completed."
+
+      # 5. 交叉编译 Go 后端到 FreeBSD
+      - name: Build Go Backend for FreeBSD
         run: |
-          export GOOS=freebsd
-          export GOARCH=amd64
-          export CGO_ENABLED=0
-          go build -ldflags "-s -w" -o new-api-freebsd-amd64 main.go
+          echo "Cross-compiling Go for FreeBSD/amd64..."
+          # 下载 Go 依赖
+          go mod download
+          
+          # 设置目标操作系统和架构
+          # GOOS: freebsd
+          # GOARCH: amd64 (最常用的 FreeBSD 架构)
+          # -ldflags "-s -w": 减小二进制文件体积
+          # -o: 指定输出文件名
+          GOOS=freebsd GOARCH=amd64 go build -ldflags "-s -w" -o new-api-freebsd-amd64
+          
+          echo "Go binary for FreeBSD created: new-api-freebsd-amd64"
 
-      # --- 步骤 A: 上传到 GitHub Release (仅在 Tag 触发时执行) ---
-      - name: Upload Release Asset
-        # 这个 if 条件是关键！它确保该步骤仅在推送 tag 时运行
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            new-api-freebsd-amd64
-
-      # --- 步骤 B: 上传为 Build Artifact (在手动触发或分支推送时执行) ---
-      - name: Upload Build Artifact
-        # 这个 if 条件确保该步骤在非 tag 触发时运行
-        if: !startsWith(github.ref, 'refs/tags/')
+      # 6. 上传构建产物
+      - name: Upload FreeBSD Binary Artifact
         uses: actions/upload-artifact@v4
         with:
+          # 产物的名称
           name: freebsd-amd64-binary
+          # 要上传的文件路径
           path: new-api-freebsd-amd64
-          retention-days: 7 # 临时构建，保留7天就够了
+          # 产物的保留天数 (可选)
+          retention-days: 30
