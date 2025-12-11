@@ -1,0 +1,73 @@
+# .github/workflows/freebsd-release.yml
+
+name: Release for FreeBSD
+
+# 触发条件：当创建一个新的以 'v' 开头的 tag 时（例如 v1.0.0）
+on:
+  push:
+    tags:
+      - 'v*'
+
+  # 你也可以添加一个手动触发，方便测试
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Go Binary for FreeBSD
+    # 使用 Ubuntu 环境进行交叉编译
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. 设置 Go 环境
+      # 它会自动读取 go.mod 文件中的版本号
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      # 3. 设置 Bun 环境（用于构建前端）
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      # 4. 构建前端资源
+      # 这是关键一步，必须先构建前端，Go 才能嵌入静态文件
+      - name: Build Frontend
+        run: |
+          cd web
+          bun install
+          bun run build
+
+      # 5. 交叉编译 Go 程序到 FreeBSD
+      - name: Build Go binary for FreeBSD
+        run: |
+          # 设置目标操作系统为 FreeBSD，架构为 amd64
+          export GOOS=freebsd
+          export GOARCH=amd64
+          # 设置 CGO_ENABLED=0 确保生成静态链接的二进制文件，避免依赖 FreeBSD 上的 C 库
+          export CGO_ENABLED=0
+          
+          # 执行编译
+          # -ldflags "-s -w" 可以减小生成的二进制文件大小
+          # -o 指定了输出文件名，包含了平台信息，便于识别
+          go build -ldflags "-s -w" -o new-api-freebsd-amd64 main.go
+          
+      # 6. 压缩二进制文件（可选，但推荐）
+      - name: Compress the binary
+        run: gzip -c new-api-freebsd-amd64 > new-api-freebsd-amd64.gz
+
+      # 7. 上传二进制文件到 GitHub Release
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          # 会自动使用触发此 workflow 的 tag 名称作为 Release 名称
+          files: |
+            new-api-freebsd-amd64
+            new-api-freebsd-amd64.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
